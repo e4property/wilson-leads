@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wilson County Leads</title>
+<style>
+  :root{--bg:#0b0d10;--panel:#14171c;--border:#252a31;--text:#e6e9ee;--muted:#8a9099;
+        --green:#3ecf8e;--amber:#e0a63e;--red:#e05a4e;--blue:#4e8ee0}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+  h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.02em}
+  .stat{font-size:13px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;padding:10px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg)}
+  td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:14px;vertical-align:top}
+  tr:hover{background:var(--panel)}
+  .score{display:inline-block;min-width:26px;text-align:center;padding:2px 6px;border-radius:5px;font-weight:700;font-size:12px}
+  .s10{background:rgba(62,207,142,.18);color:var(--green)}
+  .s7{background:rgba(224,166,62,.18);color:var(--amber)}
+  .addr{color:var(--text)}
+  .legal{color:var(--muted);font-size:12px}
+  .sale{color:var(--amber);font-weight:600}
+  .urgent{color:var(--red);font-weight:700}
+  .empty{padding:60px;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>WILSON COUNTY LEADS</h1>
+  <div class="stat" id="stat">loading…</div>
+</header>
+<table id="tbl">
+  <thead><tr><th>Score</th><th>Address / Legal Desc</th><th>Sale Date</th><th>Filed</th><th>Doc #</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<div class="empty" id="empty" style="display:none">No leads yet — first scrape hasn't run.</div>
+
+<script>
+fetch('records.json?_=' + Date.now())
+  .then(r => r.json())
+  .then(data => {
+    data.sort((a,b) => (b.score||0) - (a.score||0));
+    const tbody = document.getElementById('rows');
+    document.getElementById('stat').textContent = data.length + ' active leads';
+    if (!data.length) { document.getElementById('empty').style.display = 'block'; return; }
+    tbody.innerHTML = data.map(r => {
+      const scoreCls = (r.score||0) >= 10 ? 's10' : 's7';
+      const days = r.days_until_sale;
+      const saleCls = (days != null && days <= 14) ? 'urgent' : 'sale';
+      return `<tr>
+        <td><span class="score ${scoreCls}">${r.score||'—'}</span></td>
+        <td>${r.address ? `<div class="addr">${r.address}</div>` : ''}${r.legal_desc ? `<div class="legal">${r.legal_desc}</div>` : ''}</td>
+        <td class="${saleCls}">${r.sale_date || '—'}${days!=null?` (${days}d)`:''}</td>
+        <td>${r.date_filed || '—'}</td>
+        <td>${r.doc_number}</td>
+      </tr>`;
+    }).join('');
+  })
+  .catch(() => { document.getElementById('empty').style.display = 'block'; });
+</script>
+</body>
+</html>
