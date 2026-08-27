@@ -1,0 +1,54 @@
+name: Scrape and Deploy
+on:
+  schedule:
+    - cron: '0 14 * * 1,4'   # Mon/Thu 9am CST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  scrape-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install selenium
+
+      - name: Run scraper
+        run: python scraper/fetch.py
+
+      - name: Commit records
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add dashboard/records.json
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update leads $(date -u +'%Y-%m-%d %H:%M UTC')"
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            git rebase origin/main || git rebase --abort
+            git push origin main && echo "Push succeeded" && break
+            echo "Attempt $i failed, retrying..."
+            sleep $((RANDOM % 10 + 2))
+          done
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard/
+
+      - uses: actions/deploy-pages@v4
