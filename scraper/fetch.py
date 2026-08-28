@@ -145,11 +145,25 @@ def scrape_foreclosures(known_docs, driver, run_ts, days=None):
             continue
 
         src = driver.page_source
-        if "no results" in src.lower():
-            log.info("  No results — stopping")
-            break
-
+        # 2026-08-28: `"no results" in src.lower()` is a substring match
+        # against the ENTIRE raw page source, not a scoped element check --
+        # confirmed the exact same bug live in bexar-leads, silently
+        # dropping real leads while reporting success. Only trust "no
+        # results" if there's truly no data row AND a genuine No-Results
+        # heading is present.
         rows = re.findall(r"<tr[^>]*>(.*?)</tr>", src, re.DOTALL | re.IGNORECASE)
+        data_rows_present = any(
+            not re.search(r"<th|thead|DOC.TYPE|RECORDED|SALE.DATE|PROPERTY", row, re.IGNORECASE)
+            for row in rows
+        )
+        if not data_rows_present:
+            if driver.find_elements(By.XPATH, "//h1[contains(text(),'No Results')]"):
+                log.info("  No results — stopping")
+                break
+            time.sleep(3)
+            src = driver.page_source
+            rows = re.findall(r"<tr[^>]*>(.*?)</tr>", src, re.DOTALL | re.IGNORECASE)
+
         page_recs = []
         data_row_count = 0
 
