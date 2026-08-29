@@ -102,7 +102,13 @@ def scrape_foreclosures(known_docs, driver, run_ts, days=None):
     """
     window = days if days is not None else SCRAPE_DAYS
     cutoff = (TODAY - timedelta(days=window)).strftime("%Y%m%d")
-    end_str = (TODAY + timedelta(days=45)).strftime("%Y%m%d")
+    # 2026-08-28: instrumentDateRange started returning inconsistent/
+    # incomplete results for this department -- confirmed the identical bug
+    # live in bexar-leads and nueces-leads (same PublicSearch platform).
+    # Switched to recordedDateRange, the field actually proven to still
+    # work. No need to extend the end date into the future anymore --
+    # recorded dates are never forward-dated (unlike sale dates).
+    end_str = TODAY.strftime("%Y%m%d")
     offset = 0
     consecutive_empty = 0
     new_records = []
@@ -113,7 +119,7 @@ def scrape_foreclosures(known_docs, driver, run_ts, days=None):
         url = (
             f"{PUBLICSEARCH_BASE}/results"
             f"?department=FC"
-            f"&instrumentDateRange={cutoff}%2C{end_str}"
+            f"&recordedDateRange={cutoff}%2C{end_str}"
             f"&keywordSearch=false"
             f"&limit=50"
             f"&offset={offset}"
