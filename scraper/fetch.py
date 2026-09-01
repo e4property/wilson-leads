@@ -242,11 +242,21 @@ def scrape_foreclosures(known_docs, driver, run_ts, days=None):
 
 
 def auction_passed(sale_date_str):
+    # 2026-09-01: was comparing against TODAY (UTC, the GitHub Actions
+    # runner's clock) and a date vs a full datetime -- confirmed live in
+    # bexar-leads this purged 418 leads (158 already in Jarvis) the
+    # instant UTC crossed midnight into a sale date, hours before that
+    # date even started in Central time, let alone before the actual
+    # auction (which runs mid-morning to afternoon). Compare Central-time
+    # calendar dates only, so a lead isn't purged until the day AFTER
+    # its auction.
     if not sale_date_str:
         return False
     try:
+        from zoneinfo import ZoneInfo
         m, d, y = sale_date_str.strip().split("/")
-        return datetime(int(y), int(m), int(d)) < TODAY.replace(tzinfo=None)
+        today_central = datetime.now(ZoneInfo("America/Chicago")).date()
+        return datetime(int(y), int(m), int(d)).date() < today_central
     except Exception:
         return False
 
