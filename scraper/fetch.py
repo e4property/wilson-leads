@@ -112,10 +112,21 @@ def scrape_foreclosures(known_docs, driver, run_ts, days=None):
     offset = 0
     consecutive_empty = 0
     new_records = []
+    page_num = 0
+    # 2026-09-08: ported from bexar-leads after its equivalent loop hung
+    # 1.5+ hours with no absolute page cap -- this loop has the identical
+    # shape (same PublicSearch platform, same heuristic-only break
+    # conditions) and the same gap. Cheap insurance even though this
+    # specific county hasn't hung yet.
+    MAX_PAGES = 30
 
     log.info("Scraping FC/Foreclosures...")
 
     while True:
+        page_num += 1
+        if page_num > MAX_PAGES:
+            log.warning(f"  Hit MAX_PAGES={MAX_PAGES} — stopping, rest deferred to next run")
+            break
         url = (
             f"{PUBLICSEARCH_BASE}/results"
             f"?department=FC"
