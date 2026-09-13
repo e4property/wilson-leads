@@ -48,6 +48,192 @@ SCRAPE_DAYS = 365  # wide initial window for the first backfill run
 DOC_NUM_RE = re.compile(r"^\d{4}-\d+$")
 DATE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 
+# ── Owner enrichment via Wilson CAD (owner comes from the FC department's
+# own results table only when a personal grantor happens to be readable
+# there -- confirmed live 2026-09-13 this platform's FC table carries no
+# grantor/grantee columns at all, same limitation Bexar's FC table has
+# (see bexar-leads/scraper/fetch.py's own comment on this), so every
+# record here starts with owner="". Wilson CAD's own eSearch portal
+# (esearch.wilson-cad.org, BIS Consultants platform) supports owner-by-
+# address lookup and is confirmed live to work -- see
+# lookup_owner_by_address() below for the two real quirks found getting
+# it to actually fire.
+WILSON_CAD_URL = "https://esearch.wilson-cad.org/"
+
+ENTITY_KEYWORDS = [
+    "LLC", "LLP", "LTD", "L.L.C", "LP", "FSB", "INC", "CORP", "CORPORATION",
+    "MORTGAGE", "BANK", "N.A.", "NA", "TRUST", "TRUSTEE", "SERVICES",
+    "SERVICING", "FINANCIAL", "FINANCE", "ASSOCIATION", "FEDERAL",
+    "SAVINGS", "SOCIETY", "HOLDINGS", "CAPITAL", "FUNDING", "FUND",
+    "PARTNERS", "GROUP", "COMPANY", "CO", "PROPERTIES", "DEVELOPMENTS",
+    "INVESTMENTS", "CREDIT UNION", "HOUSING",
+]
+
+
+def is_entity_name(name):
+    if not name:
+        return True
+    upper = name.upper()
+    return any(re.search(r"\b" + re.escape(kw) + r"\b", upper) for kw in ENTITY_KEYWORDS)
+
+
+def looks_like_personal_name(name):
+    if not name:
+        return False
+    if any(ch.isdigit() for ch in name):
+        return False
+    if "," in name or ":" in name:
+        return False
+    words = name.split()
+    if len(words) < 2 or len(name) > 45:
+        return False
+    return True
+
+
+STREET_SUFFIXES = {
+    "ST", "STREET", "AVE", "AVENUE", "DR", "DRIVE", "LN", "LANE", "RD", "ROAD",
+    "CT", "COURT", "BLVD", "BOULEVARD", "WAY", "CV", "COVE", "TRL", "TRAIL",
+    "PL", "PLACE", "LOOP", "CIR", "CIRCLE", "PKWY", "PARKWAY", "HWY", "HIGHWAY",
+    "XING", "CROSSING", "PASS", "RUN", "BND", "BEND", "PT", "POINT", "TER",
+    "TERRACE", "SQ", "SQUARE", "WALK", "PATH", "ROW", "GLEN", "HOLW", "HOLLOW",
+    "VLY", "VALLEY", "RIDGE", "RDG", "MDWS", "MEADOWS", "CRK", "CREEK", "GRV",
+    "GROVE", "HL", "HILL", "HLS", "HILLS", "PARK", "LNDG", "LANDING", "SHRS",
+    "SHORES", "ESTS", "ESTATES", "VW", "VIEW", "FRST", "FOREST", "SPGS",
+    "SPRINGS", "BLF", "BLUFF", "GDNS", "GARDENS", "PLZ", "PLAZA",
+}
+DIRECTIONALS = {"N", "S", "E", "W", "NE", "NW", "SE", "SW"}
+
+
+def parse_street_number_name(address):
+    """
+    Extract (street_number, street_name_no_suffix) from a raw scraped
+    address cell, matching Wilson CAD's own eSearch form instruction
+    ("No Prefix, suffix, or Unit Numbers"). e.g. "701 LIVE OAK DR,
+    ADKINS, TEXAS, 78101" -> ("701", "LIVE OAK") -- confirmed live this
+    exact parse against this exact address returns a single, correct
+    CAD match.
+    """
+    if not address:
+        return "", ""
+    head = address.split(",")[0].strip().upper()
+    parts = head.split()
+    if not parts or not re.match(r"^\d+[A-Z]?$", parts[0]):
+        return "", ""
+    number = parts[0]
+    rest = parts[1:]
+    if rest and rest[0] in DIRECTIONALS:
+        rest = rest[1:]
+    if rest and rest[-1] in STREET_SUFFIXES:
+        rest = rest[:-1]
+    return number, " ".join(rest).strip()
+
+
+def lookup_owner_by_address(driver, street_number, street_name, timeout=20):
+    """
+    Wilson CAD's eSearch portal (BIS Consultants platform). Two real
+    quirks found getting this to actually fire, confirmed live
+    2026-09-13:
+    1. The Advanced-search inputs only carry the `name` attribute the
+       page's own JS (getSearchCriteria()) reads once the "Advanced" tab
+       link has been clicked -- setting values before that lands on
+       inputs the search silently ignores.
+    2. The site's executeSearch() bails out with no error and no console
+       output unless a real `mousemove` event has already fired on the
+       page (`if (!hasMovedMouse) { alert(...); return; }` in its own
+       source) -- a plain value-set + calling AdvancedSearch() does
+       nothing at all without this.
+    Only accepts a match when exactly one property matched (same "no
+    owner shown is better than a wrong owner shown" rule used
+    elsewhere) -- common street names can return several properties.
+    Returns "" on no match, ambiguous match, or any failure.
+    """
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    try:
+        driver.get(WILSON_CAD_URL)
+        time.sleep(2)
+        driver.execute_script(
+            "const a = Array.from(document.querySelectorAll('a'))"
+            ".find(a => a.textContent.trim() === 'Advanced'); if (a) a.click();"
+        )
+        time.sleep(1)
+        driver.execute_script(
+            """
+            function setVal(el, value) {
+                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                setter.call(el, value);
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+            const sn = document.querySelector('input[name="StreetNumber"]');
+            const snm = document.querySelector('input[name="StreetName"]');
+            if (sn) setVal(sn, arguments[0]);
+            if (snm) setVal(snm, arguments[1]);
+            document.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: 100, clientY: 100}));
+            """,
+            street_number, street_name,
+        )
+        time.sleep(0.5)
+        driver.execute_script("if (typeof AdvancedSearch === 'function') AdvancedSearch();")
+        WebDriverWait(driver, timeout).until(lambda d: "/search/result" in d.current_url)
+        time.sleep(1.5)
+    except Exception as e:
+        log.debug(f"  CAD lookup failed for {street_number} {street_name}: {e}")
+        return ""
+
+    try:
+        rows = driver.execute_script(
+            """
+            const table = document.querySelector('table');
+            if (!table) return [];
+            return Array.from(table.querySelectorAll('tbody tr'))
+                .filter(tr => tr.querySelectorAll('td').length > 0)
+                .map(tr => Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim()));
+            """
+        ) or []
+    except Exception:
+        return ""
+
+    if len(rows) != 1:
+        return ""
+    # Header confirmed live: Property ID, Year, Geo ID, Nbrhd. Code, Type,
+    # Owner Name, Owner ID, Situs Address, ... -- Owner Name is index 5.
+    row = rows[0]
+    return row[5].strip() if len(row) > 5 else ""
+
+
+def enrich_owners(records, driver):
+    """
+    Runs lookup_owner_by_address() for records with a real address but
+    no owner (every record, currently -- see the module comment above).
+    """
+    candidates = [
+        r for r in records
+        if not (r.get("owner") or "").strip() and (r.get("address") or "").strip()
+    ]
+    if not candidates:
+        return records
+
+    log.info(f"Owner enrichment: {len(candidates)} candidates")
+    found = 0
+    for rec in candidates:
+        number, name = parse_street_number_name(rec["address"])
+        if not number or not name:
+            continue
+        owner = lookup_owner_by_address(driver, number, name)
+        if owner and not is_entity_name(owner) and looks_like_personal_name(owner):
+            rec["owner"] = owner.title()
+            found += 1
+            log.info(f"  [{rec['doc_number']}] owner: -> {rec['owner']!r}")
+        elif owner:
+            # A real CAD match, just not a personal name (e.g. an LLC that
+            # bought the property) -- record it plainly rather than
+            # silently dropping real, if uninteresting, data.
+            rec["owner"] = owner.title()
+        time.sleep(1)
+    log.info(f"Owner enrichment: {found}/{len(candidates)} personal names found")
+    return records
+
 
 def get_driver():
     opts = Options()
@@ -343,10 +529,11 @@ def main():
     driver = get_driver()
     try:
         new_recs = scrape_foreclosures(known_docs, driver, run_ts)
+        all_records = dedup(existing, new_recs)
+        all_records = enrich_owners(all_records, driver)
     finally:
         driver.quit()
 
-    all_records = dedup(existing, new_recs)
     all_records = purge_past_auctions(all_records)
 
     for rec in all_records:
