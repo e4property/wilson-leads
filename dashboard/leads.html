@@ -526,6 +526,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
   <div class="nav-r">
     <span class="upd" id="last-upd"></span>
     <div class="ghl-pill"><div class="ghl-dot" id="ghl-dot"></div><span id="ghl-txt">GHL</span></div>
+    <button class="nav-btn" id="btn-driveby" onclick="toggleDriveBy()">🚗 Drive-By</button>
     <button class="nav-btn" onclick="openSettings()">⚙ Settings</button>
     <button class="nav-btn run" id="btn-scrape" onclick="triggerScrape()">▶ Run Scrape</button>
   </div>
@@ -690,6 +691,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
         <div class="detail-hdr" id="detail-hdr">
           <div class="dh-name" id="d-name"></div>
           <div class="dh-addr" id="d-addr" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
+          <div class="dh-mail-addr" id="d-mail-addr" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px;color:var(--amber-dk)"></div>
           <div class="dh-meta" id="d-meta"></div>
           <div class="dh-badges" id="d-badges"></div>
         </div>
@@ -798,6 +800,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
                 <button class="act-btn" onclick="skipLead()">Skip</button>
                 <button class="act-btn" onclick="copyAddress()">Copy Addr</button>
                 <button class="act-btn" onclick="openStreetView()">🗺️ Street View</button>
+                <button class="act-btn" style="background:var(--red-bg);border-color:var(--red-mid);color:var(--red-dk)" onclick="tagDriveBy('VACANT')">✅ Vacant</button>
+                <button class="act-btn" onclick="tagDriveBy('OCCUPIED')">🏠 Occupied</button>
                 <button class="act-btn" onclick="openGHL()">GHL ↗</button>
               </div>
             </div>
@@ -913,7 +917,7 @@ function showView(v,el){
 }
 
 /* KEYS */
-function setupKeys(){document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;if(e.key==='d'){showView('dash');return;}if(e.key==='w'){showView('work');return;}if(e.key==='j'||e.key==='ArrowDown'){e.preventDefault();navList(1);}else if(e.key==='k'||e.key==='ArrowUp'){e.preventDefault();navList(-1);}else if(e.key==='n'||e.key==='N'){e.preventDefault();navNextUnworked();}else if(e.key==='p'){e.preventDefault();const pi=document.getElementById('phone-input');if(pi&&pi.offsetParent!==null){pi.focus();pi.select();}}else if(e.key==='c'&&selectedDoc){copyAddress();}else if(e.key==='g'&&selectedDoc){openGHL();}});}
+function setupKeys(){document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;if(e.key==='d'){showView('dash');return;}if(e.key==='w'){showView('work');return;}if(e.key==='j'||e.key==='ArrowDown'){e.preventDefault();navList(1);}else if(e.key==='k'||e.key==='ArrowUp'){e.preventDefault();navList(-1);}else if(e.key==='n'||e.key==='N'){e.preventDefault();navNextUnworked();}else if(e.key==='p'){e.preventDefault();const pi=document.getElementById('phone-input');if(pi&&pi.offsetParent!==null){pi.focus();pi.select();}}else if(e.key==='c'&&selectedDoc){copyAddress();}else if(e.key==='g'&&selectedDoc){openGHL();}else if(e.key==='v'&&selectedDoc&&driveByMode){e.preventDefault();tagDriveBy('VACANT');}else if(e.key==='o'&&selectedDoc&&driveByMode){e.preventDefault();tagDriveBy('OCCUPIED');}});}
 
 function navList(dir){const ni=Math.max(0,Math.min(filteredLeads.length-1,selectedIdx+dir));if(ni!==selectedIdx){selectedIdx=ni;const l=filteredLeads[ni];if(l){selectLead(l.doc_number);const items=document.querySelectorAll('.litem');if(items[ni])items[ni].scrollIntoView({block:'nearest'});}}}
 function navNextUnworked(){const start=selectedIdx>=0?selectedIdx+1:0;for(let i=start;i<filteredLeads.length;i++){const l=filteredLeads[i];const ls=LS(l.doc_number);if(!ls.phone&&!ls.skipped){selectedIdx=i;selectLead(l.doc_number);const items=document.querySelectorAll('.litem');if(items[i])items[i].scrollIntoView({block:'nearest'});toast('Next unworked','ok');return;}}for(let i=0;i<start;i++){const l=filteredLeads[i];const ls=LS(l.doc_number);if(!ls.phone&&!ls.skipped){selectedIdx=i;selectLead(l.doc_number);const items=document.querySelectorAll('.litem');if(items[i])items[i].scrollIntoView({block:'nearest'});toast('Next unworked (wrapped)','ok');return;}}toast('All leads worked!','ok');}
@@ -1146,7 +1150,7 @@ function renderItem(lead,idx){
   else if(lp)b.push(`<span class="badge b-lp">LP</span>`);
   else if(isProbate(lead))b.push(`<span class="badge" style="background:var(--amber-bg);color:var(--amber-dk);border:1px solid var(--amber-mid)">PROBATE</span>`);
   else if(isAppt(lead))b.push(`<span class="badge" style="background:var(--red-bg);color:var(--red-dk);border:1px solid var(--red-mid)">⚡PRE</span>`);
-  else{if(lead.absentee)b.push(`<span class="badge b-abs">ABS</span>`);b.push(lead.type==='TAX'?`<span class="badge b-tax">TAX</span>`:`<span class="badge b-nof">NOF</span>`);}
+  else{if(lead.absentee)b.push(`<span class="badge b-abs">ABS</span>`);const tt=lead.type==='TAX'?'TAX':lead.type==='MECHLN'?'MECH LIEN':lead.type==='LP'?'LIS PEN':lead.type&&lead.type!=='NOF'?lead.type:'NOF';b.push(`<span class="badge b-nof">${tt}</span>`);}
   if(isLongHeld(lead))b.push(`<span class="badge b-longheld">LONG HELD</span>`);
   if(lead.source_verify_status==='mismatch')b.push(`<span class="badge" style="background:var(--red-bg);color:var(--red-dk);border:1px solid var(--red-mid)">⚠️ VERIFY ADDRESS</span>`);
   if(lead.on_market)b.push(`<span class="badge" style="background:var(--amber-bg);color:var(--amber-dk);border:1px solid var(--amber-mid)">🏷️ ON MARKET</span>`);
@@ -1166,7 +1170,35 @@ function renderItem(lead,idx){
 <div class="li-bot"><div class="li-badges">${b.join('')}</div><div class="li-right">${scrapedStr?`<span class="li-age ${scrapedCls}">⬇ ${scrapedStr}</span>`:''} ${ageStr?`<span class="li-age ${ageCls}">${ageStr}</span>`:''} ${lead.appr_trend?`<span class="li-trend ${trendClass(lead.appr_trend)}">${trendArrow(lead.appr_trend)}</span>`:''} ${eqStr?`<span class="li-eq">Eq <b>${eqStr}</b></span>`:''} ${dateStr?`<span class="li-date ${dateCls}">🔨${dateStr}</span>`:''}</div></div>
 </div>`;}
 
-function selectLead(doc){selectedDoc=doc;selectedIdx=filteredLeads.findIndex(l=>l.doc_number===doc);const lead=allLeads.find(l=>l.doc_number===doc);if(!lead)return;if(currentNavView==='dash')showView('work');renderList();populateDetail(lead);}
+function selectLead(doc){selectedDoc=doc;selectedIdx=filteredLeads.findIndex(l=>l.doc_number===doc);const lead=allLeads.find(l=>l.doc_number===doc);if(!lead)return;if(currentNavView==='dash')showView('work');renderList();populateDetail(lead);if(driveByMode)openStreetView();}
+let driveByMode=false;
+function toggleDriveBy(){
+  driveByMode=!driveByMode;
+  const btn=document.getElementById('btn-driveby');
+  btn.classList.toggle('run',driveByMode);
+  btn.textContent=driveByMode?'🚗 Drive-By: ON':'🚗 Drive-By';
+  if(driveByMode){
+    showView('work');setView('vbp');
+    toast('Drive-By mode on — j/k to move, v=vacant confirmed, o=occupied','ok');
+    if(selectedDoc)openStreetView();
+  } else {
+    toast('Drive-By mode off','ok');
+  }
+}
+function tagDriveBy(status){
+  if(!selectedDoc){toast('No lead selected',true);return;}
+  if(!S.leads[selectedDoc])S.leads[selectedDoc]={};
+  const ta=document.getElementById('notes-area');
+  const stamp=`[DRIVE-BY ${status} ${new Date().toLocaleDateString()}]`;
+  const existing=(ta.value||'').replace(/\[DRIVE-BY [A-Z]+ [\d\/]+\]\s*/,'').trim();
+  const notes=(stamp+' '+existing).trim();
+  ta.value=notes;
+  S.leads[selectedDoc].notes=notes;
+  saveState();
+  writeBackToRepo(selectedDoc,{dash_notes:notes});
+  toast(status==='VACANT'?'✅ Confirmed vacant':'🏠 Marked occupied','ok');
+  navList(1);
+}
 
 function parseName(owner){if(!owner||!owner.trim())return{first:'',last:''};let c=owner.replace(/\s*&\s*$/,'').trim();if(c.includes('&'))c=c.split('&')[0].trim();c=c.replace(/\b(JR|SR|II|III|IV|V|EST OF|C\/T|ETAL|C\/O)\b/gi,'').replace(/\s+/g,' ').trim();const p=c.split(/\s+/).filter(Boolean);if(!p.length)return{first:'',last:''};if(p.length===1)return{first:toTitle(p[0]),last:''};return{first:toTitle(p.slice(1).join(' ')),last:toTitle(p[0])};}
 function fmtDate(raw){if(!raw)return'—';raw=raw.trim();const mdy=raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);if(mdy){const d=new Date(+mdy[3],+mdy[1]-1,+mdy[2]);return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}const my=raw.match(/^(\d{1,2})\/(\d{4})$/);if(my){const d=new Date(+my[2],+my[1]-1,1);return d.toLocaleDateString('en-US',{month:'short',year:'numeric'});}const iso=raw.match(/^(\d{4})-(\d{2})-(\d{2})/);if(iso){const d=new Date(+iso[1],+iso[2]-1,+iso[3]);return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}return raw;}
@@ -1187,6 +1219,11 @@ function populateDetail(lead){
   const dName=stacked?(lead.owner||'Vacant+CE Property'):vbp?(lead.owner||'Vacant Property'):ce&&!lead.owner?(lead.ce_cat_label||'Code Enforcement'):lp&&!lead.owner?'Lis Pendens':appt&&!lead.owner?'Pre-Foreclosure':(lead.owner||'—');
   set('d-name',dName);
   document.getElementById('d-addr').innerHTML=`<span>${lead.address||''}${lead.city?', '+lead.city:''} TX ${lead.zip||''}</span>`+(lead.address?`<button class="act-btn" style="padding:2px 8px;font-size:11px" onclick="openStreetView()">🗺️ Street View</button>`:'');
+  const mailEl=document.getElementById('d-mail-addr');
+  const propNorm=(lead.address||'').trim().toUpperCase();
+  const mailDiffers=lead.mail_addr&&!lead.mail_addr.toUpperCase().startsWith(propNorm);
+  if(lead.absentee&&mailDiffers){mailEl.style.display='flex';mailEl.innerHTML=`<span>📬 Mailing: ${lead.mail_addr}</span><button class="act-btn" style="padding:2px 8px;font-size:11px" onclick="copyMailAddress()">📋 Copy Mailing</button>`;}
+  else{mailEl.style.display='none';mailEl.innerHTML='';}
   document.getElementById('d-meta').textContent=ce?`Case: ${lead.ce_case_id||lead.doc_number} · Opened: ${fmtDate(lead.opened_date)}`:`Doc: ${lead.doc_number} · ${lead.date_recorded?'Recorded: '+fmtDate(lead.date_recorded):'Filed: '+fmtDate(lead.date_filed)}${lead.sale_date?' · Sale: '+fmtDate(lead.sale_date):''}`;
   const b=[];
   if(isNew)b.push(`<span class="badge b-new" style="padding:2px 9px;font-size:10px">✨ NEW</span>`);
@@ -1196,7 +1233,7 @@ function populateDetail(lead){
   else if(ce)b.push(`<span class="badge b-ce" style="padding:2px 9px;font-size:10px">⚠ CE</span>`);
   else if(lp)b.push(`<span class="badge b-lp" style="padding:2px 9px;font-size:10px">📜 LP</span>`);
   else if(appt)b.push(`<span class="badge" style="background:var(--red-bg);color:var(--red-dk);border:1px solid var(--red-mid);padding:2px 9px;font-size:10px">⚡ Pre-Fore</span>`);
-  else{if(lead.absentee)b.push(`<span class="badge b-abs" style="padding:2px 9px;font-size:10px">Absentee</span>`);b.push(lead.type==='TAX'?`<span class="badge b-tax" style="padding:2px 9px;font-size:10px">Tax Fore</span>`:`<span class="badge b-nof" style="padding:2px 9px;font-size:10px">NOF</span>`);}
+  else{if(lead.absentee)b.push(`<span class="badge b-abs" style="padding:2px 9px;font-size:10px">Absentee</span>`);const tt2=lead.type==='TAX'?'Tax Fore':lead.type==='MECHLN'?'Mechanics Lien':lead.type==='LP'?'Lis Pendens':lead.type&&lead.type!=='NOF'?lead.type:'NOF';b.push(`<span class="badge b-nof" style="padding:2px 9px;font-size:10px">${tt2}</span>`);}
   if(isLongHeld(lead))b.push(`<span class="badge b-longheld" style="padding:2px 9px;font-size:10px">🏠 Long Held ${lead.tenure_years}yr</span>`);
   if(lead.source_verify_status==='mismatch')b.push(`<span class="badge" style="background:var(--red-bg);color:var(--red-dk);border:1px solid var(--red-mid);padding:2px 9px;font-size:10px">⚠️ Address doesn't match county doc — verify before working</span>`);
   if(ls.ghl_pushed)b.push(`<span class="badge b-ghl" style="padding:2px 9px;font-size:10px">In Jarvis</span>`);
@@ -1595,6 +1632,7 @@ function openStreetView(){
 }
 
 function copyAddress(){const lead=allLeads.find(l=>l.doc_number===selectedDoc);if(!lead)return;const addressInput=document.getElementById('sf-address'),cityInput=document.getElementById('sf-city'),zipInput=document.getElementById('sf-zip');const addr=(addressInput&&addressInput.value.trim())||toTitle(lead.address||'');const city=(cityInput&&cityInput.value.trim())||toTitle(lead.city||'');const zip=(zipInput&&zipInput.value.trim())||lead.zip;navigator.clipboard.writeText(`${addr}, ${city} TX ${zip}`);toast('Address copied');}
+function copyMailAddress(){const lead=allLeads.find(l=>l.doc_number===selectedDoc);if(!lead||!lead.mail_addr)return;navigator.clipboard.writeText(lead.mail_addr);toast('Mailing address copied');}
 function openGHL(){const ls=LS(selectedDoc);window.open(ls.ghlId?`https://app.justjarvis.com/v2/location/${S.ghlLocationId}/contacts/detail/${ls.ghlId}`:'https://app.justjarvis.com','_blank');}
 
 async function pushGHL(lead,phone){
@@ -1765,7 +1803,7 @@ function toast(msg,type=false){const el=document.getElementById('toast');el.text
 if('serviceWorker' in navigator){navigator.serviceWorker.register('/wilson-leads/sw.js').catch(e=>console.log('SW:',e));}
 setInterval(()=>fetchLeads(),15*60*1000);
 
-const DEFAULT_COUNTIES=[{id:'wilson',name:'Wilson County',label:'WILSON·LEADS',url:'https://e4property.github.io/wilson-leads/records.json',ghlTag:'wilson_lead',color:'var(--blue)'},{id:'sanpatricio',name:'San Patricio County',label:'SAN PATRICIO·LEADS',url:'https://e4property.github.io/sanpatricio-leads/records.json',ghlTag:'sanpatricio_lead',color:'var(--teal)'}];
+const DEFAULT_COUNTIES=[{id:'bexar',name:'Bexar County',label:'BEXAR·LEADS',url:'https://e4property.github.io/bexar-leads/records.json',ghlTag:'bexar_lead',color:'var(--blue)'},{id:'nueces',name:'Nueces County',label:'NUECES·LEADS',url:'https://e4property.github.io/nueces-leads/records.json',ghlTag:'nueces_lead',color:'var(--teal)'},{id:'travis',name:'Travis County',label:'TRAVIS·LEADS',url:'https://e4property.github.io/travis-leads/records.json',ghlTag:'travis_lead',color:'var(--red)'},{id:'wilson',name:'Wilson County',label:'WILSON·LEADS',url:'https://e4property.github.io/wilson-leads/records.json',ghlTag:'wilson_lead',color:'var(--amber)'},{id:'sanpatricio',name:'San Patricio County',label:'SAN PATRICIO·LEADS',url:'https://e4property.github.io/sanpatricio-leads/records.json',ghlTag:'sanpatricio_lead',color:'var(--teal)'},{id:'dallas',name:'Dallas County',label:'DALLAS·LEADS',url:'https://e4property.github.io/dallas-leads/records.json',ghlTag:'dallas_lead',color:'var(--green)'},{id:'guadalupe',name:'Guadalupe County',label:'GUADALUPE·LEADS',url:'https://e4property.github.io/guadalupe-leads/records.json',ghlTag:'guadalupe_lead',color:'var(--purple)'}];
 // Scoped per-site with SK (bl_v6/nl_v1/gl_v1) — NOT a bare global key. GitHub
 // Pages serves wilson-leads/sanpatricio-leads (and the other counties) all under the same
 // e4property.github.io origin, and localStorage is shared per-origin, not
