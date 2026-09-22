@@ -25,7 +25,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install selenium
+        run: pip install selenium homeharvest pandas
 
       - name: Run scraper
         run: python scraper/fetch.py
