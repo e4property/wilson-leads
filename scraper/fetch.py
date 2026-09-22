@@ -43,6 +43,12 @@ RECORDS_PATH = Path("dashboard/records.json")
 TODAY = datetime.now(timezone.utc)
 SCRAPE_DAYS = 365  # wide initial window for the first backfill run
 
+# ── On-market status via HomeHarvest (free, Realtor.com, no Selenium) ──────
+ON_MARKET_STATUSES     = {"FOR_SALE", "PENDING", "FOR_RENT"}
+ON_MARKET_FETCH_LIMIT   = 15  # max never-checked leads to look up per run
+ON_MARKET_REFRESH_DAYS  = 7   # re-check a lead's status at most this often
+ON_MARKET_REFRESH_LIMIT = 10  # max already-checked leads to re-check per run
+
 # Wilson's doc numbers are "YYYY-NNN" (e.g. "2020-38"), not the pure
 # 7-10 digit numeric format Bexar/Nueces use -- confirmed live 2026-08-26.
 DOC_NUM_RE = re.compile(r"^\d{4}-\d+$")
@@ -517,6 +523,162 @@ def dedup(existing, new_recs):
     return list(seen.values())
 
 
+STREET_SUFFIX_WORDS = {
+    "ST", "STREET", "DR", "DRIVE", "RD", "ROAD", "AVE", "AVENUE", "LN", "LANE",
+    "CT", "COURT", "BLVD", "BOULEVARD", "WAY", "CIR", "CIRCLE", "TRL", "TRAIL",
+    "PL", "PLACE", "PKWY", "PARKWAY", "LOOP", "RUN", "PASS", "XING", "CROSSING",
+    "COVE", "BND", "BEND", "VW", "VIEW", "HOLW", "HOLLOW", "RDG", "RIDGE",
+    "MDW", "MDWS", "MEADOW", "MEADOWS", "GLN", "GLEN", "HL", "HILL", "HLS",
+    "HILLS", "PT", "POINT", "SQ", "SQUARE", "TER", "TERRACE", "WALK", "GRV",
+    "GROVE", "VLY", "VALLEY", "N", "S", "E", "W", "NE", "NW", "SE", "SW",
+}
+
+
+def _street_core_tokens(street):
+    """Uppercase, strip punctuation, drop directional/suffix words -- leaves
+    just the house number + distinctive name word(s) so a county record's
+    abbreviated form compares cleanly against Realtor.com's own formatting.
+    `street` may be a pandas NA sentinel (from a DataFrame row), not just
+    None -- `pd.NA or ""` raises 'boolean value of NA is ambiguous', so
+    str() first."""
+    street = str(street) if street is not None else ""
+    if street in ("nan", "<NA>", "None"):
+        street = ""
+    s = re.sub(r"[^A-Z0-9 ]", " ", street.upper())
+    return [t for t in s.split() if t not in STREET_SUFFIX_WORDS]
+
+
+def address_matches(searched_addr, searched_zip, row_street, row_zip):
+    """
+    Verify a HomeHarvest/Realtor.com search result actually corresponds to
+    the property we searched for, before trusting its on-market status.
+
+    2026-09-22: confirmed live (bexar-leads) that scrape_property(location=
+    ...) silently returns its best guess even when nothing real matches --
+    "214 MUNIZ, SAN ANTONIO, TX 78223" returned an unrelated FOR_RENT
+    listing miles away, and "22965 N ADDISON, SAN ANTONIO, TX" matched a
+    property in Quinque, VIRGINIA (the parser read the house number as a
+    zip code). Built this in from the start here rather than the same gap
+    Bexar/Nueces/Travis had to find and fix the hard way. Require the
+    house number to match exactly, at least one distinctive street-name
+    word to overlap, and zip to match when both sides have one.
+    """
+    searched_tokens = _street_core_tokens(searched_addr)
+    row_tokens = _street_core_tokens(row_street)
+    if not searched_tokens or not row_tokens:
+        return False
+    searched_num = searched_tokens[0] if searched_tokens[0].isdigit() else None
+    row_num = row_tokens[0] if row_tokens[0].isdigit() else None
+    if not searched_num or searched_num != row_num:
+        return False
+    if not (set(searched_tokens[1:]) & set(row_tokens[1:])):
+        return False
+    sz = str(searched_zip) if searched_zip is not None else ""
+    rz = str(row_zip) if row_zip is not None else ""
+    sz = "" if sz in ("nan", "<NA>", "None") else sz.strip()[:5]
+    rz = "" if rz in ("nan", "<NA>", "None") else rz.strip()[:5]
+    if sz and rz and sz != rz:
+        return False
+    return True
+
+
+def _first_matching_row(df, searched_addr, searched_zip):
+    """Scan every row HomeHarvest returned (not just the first) for one that
+    actually verifies against the searched address. Returns None if none do
+    -- callers must treat that exactly like 'no results'."""
+    for _, row in df.iterrows():
+        if address_matches(searched_addr, searched_zip, row.get("street"), row.get("zip_code")):
+            return row
+    return None
+
+
+def fetch_on_market_status(records):
+    """
+    Flags leads that are already listed for sale/rent elsewhere, using
+    homeharvest (pip, MIT license) against Realtor.com's public page data --
+    no API key, no cost, no Selenium driver needed (does its own HTTP).
+    Ported from nueces-leads, address-verification fix included from day 1
+    (see address_matches()).
+
+    Soft dependency: any failure (network, no match, library error) just
+    leaves on_market unset for that lead rather than breaking the run.
+    Two passes: never-checked leads first (ON_MARKET_FETCH_LIMIT), then a
+    refresh of already-checked leads older than ON_MARKET_REFRESH_DAYS
+    (ON_MARKET_REFRESH_LIMIT) -- a lead can get listed by someone else
+    weeks after we first looked, so a one-time check isn't enough.
+    """
+    import pandas as pd
+    from homeharvest import scrape_property
+
+    def clean(val):
+        if val is None or pd.isna(val):
+            return None
+        s = str(val).strip()
+        return None if s in ("", "nan", "<NA>", "None") else val
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=ON_MARKET_REFRESH_DAYS)
+
+    def needs_refresh(r):
+        checked_at = r.get("on_market_checked_at")
+        if not checked_at:
+            return True
+        try:
+            return datetime.strptime(checked_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) < cutoff
+        except Exception:
+            return True
+
+    never_checked = [r for r in records if r.get("address") and not r.get("on_market_checked_at")]
+    stale_checked = [r for r in records if r.get("address") and r.get("on_market_checked_at") and needs_refresh(r)]
+
+    candidates = never_checked[:ON_MARKET_FETCH_LIMIT] + stale_checked[:ON_MARKET_REFRESH_LIMIT]
+
+    if not candidates:
+        log.info("On-market: no eligible leads — skipping")
+        return records
+
+    log.info(f"On-market: {len(never_checked[:ON_MARKET_FETCH_LIMIT])} new + "
+             f"{len(stale_checked[:ON_MARKET_REFRESH_LIMIT])} refresh "
+             f"(caps={ON_MARKET_FETCH_LIMIT}/{ON_MARKET_REFRESH_LIMIT})")
+    changed = 0
+    errors = 0
+
+    for rec in candidates:
+        full_addr = f"{rec['address']}, {rec.get('city', '')}, TX {rec.get('zip', '')}".strip(", ")
+        try:
+            df = scrape_property(location=full_addr)
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            was_on_market = bool(rec.get("on_market"))
+
+            if df is None or len(df) == 0:
+                rec["on_market_checked_at"] = now_iso
+                continue
+
+            row = _first_matching_row(df, rec["address"], rec.get("zip"))
+            if row is None:
+                log.info(f"  On-market [{rec.get('doc_number')}] {full_addr}: "
+                         f"{len(df)} result(s) returned but none verified against this address -- treating as no match")
+                rec["on_market_checked_at"] = now_iso
+                continue
+
+            status = clean(row.get("status")) or ""
+            rec["on_market"]            = status in ON_MARKET_STATUSES
+            rec["on_market_status"]     = status
+            rec["on_market_checked_at"] = now_iso
+
+            if rec["on_market"] != was_on_market:
+                changed += 1
+                log.info(f"  On-market [{rec.get('doc_number')}] {full_addr}: "
+                         f"{was_on_market} -> {rec['on_market']} (status={status})")
+        except Exception as e:
+            log.warning(f"  On-market [{rec.get('doc_number')}] {full_addr}: error: {e}")
+            errors += 1
+        finally:
+            time.sleep(1)
+
+    log.info(f"On-market: {changed} status changes, {errors} errors out of {len(candidates)} candidates")
+    return records
+
+
 def main():
     run_ts = TODAY.isoformat()
     existing = []
@@ -535,6 +697,11 @@ def main():
         driver.quit()
 
     all_records = purge_past_auctions(all_records)
+
+    try:
+        all_records = fetch_on_market_status(all_records)
+    except Exception as e:
+        log.warning(f"On-market status error: {e}")
 
     for rec in all_records:
         rec["score"] = score_record(rec)
