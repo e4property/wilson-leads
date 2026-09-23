@@ -44,7 +44,7 @@ TODAY = datetime.now(timezone.utc)
 SCRAPE_DAYS = 365  # wide initial window for the first backfill run
 
 # ── On-market status via HomeHarvest (free, Realtor.com, no Selenium) ──────
-ON_MARKET_STATUSES     = {"FOR_SALE", "PENDING", "FOR_RENT"}
+ON_MARKET_STATUSES     = {"FOR_SALE", "PENDING"}
 ON_MARKET_FETCH_LIMIT   = 15  # max never-checked leads to look up per run
 ON_MARKET_REFRESH_DAYS  = 7   # re-check a lead's status at most this often
 ON_MARKET_REFRESH_LIMIT = 10  # max already-checked leads to re-check per run
@@ -645,7 +645,7 @@ def fetch_on_market_status(records):
     for rec in candidates:
         full_addr = f"{rec['address']}, {rec.get('city', '')}, TX {rec.get('zip', '')}".strip(", ")
         try:
-            df = scrape_property(location=full_addr)
+            df = scrape_property(location=full_addr, listing_type=["for_sale", "pending"])
             now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             was_on_market = bool(rec.get("on_market"))
 
