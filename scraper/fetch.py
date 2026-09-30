@@ -464,26 +464,14 @@ def auction_passed(sale_date_str):
         return False
 
 
-def too_soon_to_work(sale_date_str, threshold_days=5):
-    # 2026-09-30: was comparing raw datetimes instead of calendar dates --
-    # confirmed live this purged an entire county's near-term auction wave a
-    # full day early (time-of-day truncation made a genuine 6-calendar-day-
-    # out lead's raw timedelta come out to 5 days, tripping this <= 5
-    # threshold prematurely). Same calendar-date-only fix already applied
-    # to auction_passed() above, ported here. purge_past_auctions() deletes
-    # these records outright, not just hides them -- this was destroying
-    # real, high-urgency leads, not a cosmetic display bug.
-    if not sale_date_str:
-        return False
-    try:
-        from zoneinfo import ZoneInfo
-        m, d, y = sale_date_str.strip().split("/")
-        sale_dt = datetime(int(y), int(m), int(d)).date()
-        today_central = datetime.now(ZoneInfo("America/Chicago")).date()
-        days_until = (sale_dt - today_central).days
-        return 0 <= days_until <= threshold_days
-    except Exception:
-        return False
+# too_soon_to_work() (a days-before-auction auto-purge) REMOVED 2026-09-30
+# per explicit updated instruction: leads should not be purged until the
+# day after their own auction date -- auction_passed() above already does
+# exactly that. A calendar-date bug in the removed function's threshold
+# check had also just deleted an entire county's near-term auction wave a
+# day early, which is what prompted revisiting the policy itself rather
+# than just the bug. Dashboard cleanup of unworked near-auction leads is
+# now a manual task, not an automatic one.
 
 
 def purge_past_auctions(records):
@@ -493,7 +481,7 @@ def purge_past_auctions(records):
             kept.append(rec)
             continue
         sd = rec.get("sale_date", "")
-        if sd and (auction_passed(sd) or too_soon_to_work(sd)):
+        if sd and auction_passed(sd):
             continue
         kept.append(rec)
     removed = len(records) - len(kept)
