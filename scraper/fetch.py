@@ -319,21 +319,46 @@ def scrape_foreclosures(known_docs, driver, run_ts, days=None):
         if page_num > MAX_PAGES:
             log.warning(f"  Hit MAX_PAGES={MAX_PAGES} — stopping, rest deferred to next run")
             break
-        url = (
-            f"{PUBLICSEARCH_BASE}/results"
-            f"?department=FC"
-            f"&recordedDateRange={cutoff}%2C{end_str}"
-            f"&keywordSearch=false"
-            f"&limit=50"
-            f"&offset={offset}"
-            f"&sort=desc"
-            f"&sortBy=recordedDate"
-            f"&searchType=advancedSearch"
-        )
         log.info(f"  offset={offset}")
 
+        # 2026-10-01: same root cause and fix confirmed live on bexar-leads/
+        # tarrant-leads/nueces-leads/dallas-leads tonight -- a second-or-
+        # later hard navigation (driver.get) in one session gets served a
+        # genuine "No Results Found" decoy page on this PublicSearch
+        # platform. Page 1 keeps the direct navigation (reliable for a
+        # session's first request); page 2+ clicks the pagination button
+        # on the already-loaded page instead.
+        if page_num == 1:
+            url = (
+                f"{PUBLICSEARCH_BASE}/results"
+                f"?department=FC"
+                f"&recordedDateRange={cutoff}%2C{end_str}"
+                f"&keywordSearch=false"
+                f"&limit=50"
+                f"&offset={offset}"
+                f"&sort=desc"
+                f"&sortBy=recordedDate"
+                f"&searchType=advancedSearch"
+            )
+            try:
+                driver.get(url)
+            except Exception as e:
+                log.warning(f"  Page load error: {e}")
+                consecutive_empty += 1
+                if consecutive_empty >= 2:
+                    break
+                time.sleep(5)
+                continue
+        else:
+            try:
+                next_btn = driver.find_element(By.CSS_SELECTOR, "button[aria-label='next page']")
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", next_btn)
+                next_btn.click()
+            except Exception as e:
+                log.info(f"  Next-page click failed/absent: {e} — treating as end of results")
+                break
+
         try:
-            driver.get(url)
             # No-results pages render an <h1> with a build-hashed CSS class
             # (e.g. "css-z524vz", changes per deploy) -- never a stable
             # ".no-results" class name. Match on the visible text instead,
