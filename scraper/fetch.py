@@ -274,7 +274,7 @@ def new_record(doc_number, lead_type, run_ts):
         "is_new": True,
         "duplicate": False,
         "ghl_tag": "wilson_lead",
-        "dash_phone": "",
+        "dash_has_phone": False,
         "dash_dispo": "new",
         "dash_notes": "",
         "ghl_pushed": False,
@@ -502,7 +502,7 @@ def auction_passed(sale_date_str):
 def purge_past_auctions(records):
     kept = []
     for rec in records:
-        if rec.get("ghl_pushed") or rec.get("dash_phone"):
+        if rec.get("ghl_pushed") or rec.get("dash_has_phone") or rec.get("dash_phone"):
             kept.append(rec)
             continue
         sd = rec.get("sale_date", "")
@@ -729,6 +729,12 @@ def main():
     for rec in all_records:
         rec["score"] = score_record(rec)
         rec["days_until_sale"] = days_until_sale(rec.get("sale_date", ""))
+        # 2026-11-11 privacy: phone numbers, notes and lookup dates live ONLY in
+        # the private repo (e4property/e4-leads-private). Never publish them.
+        if rec.get("dash_phone"):
+            rec["dash_has_phone"] = True
+        for k in ("dash_phone", "dash_notes", "dash_searched_at"):
+            rec.pop(k, None)
 
     RECORDS_PATH.parent.mkdir(parents=True, exist_ok=True)
     RECORDS_PATH.write_text(
